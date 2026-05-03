@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "@ai-sdk/google";
-import { generateText, type CoreMessage } from "ai";
+import { generateText } from "ai";
 
 // ─── In-memory rate limiter ────────────────────────────────────────────────────
 const rateLimit = new Map<string, { count: number; timestamp: number }>();
-const RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute window
+const RATE_LIMIT_WINDOW = 60 * 1000;
 const MAX_REQUESTS = 15;
 
 // ─── System prompt ────────────────────────────────────────────────────────────
@@ -15,7 +15,7 @@ If asked for political opinions or who to vote for, politely decline and emphasi
 Keep your answers concise, well-structured, and easy to read. Use bullet points where helpful.
 Always be encouraging and supportive of civic participation.`;
 
-// ─── Keyword fallback answers (works without API key) ─────────────────────────
+// ─── Keyword fallback answers ──────────────────────────────────────────────────
 const FALLBACK_ANSWERS: Record<string, string> = {
   register:
     "**How to Register to Vote:**\n\n• Check your eligibility (age 18+, citizenship, residency)\n• Visit your state/country's official election website\n• Fill out the voter registration form with your ID details\n• Submit before the registration deadline\n• Verify your registration is confirmed via SMS/email\n\n📋 Carry a valid government ID and proof of address.",
@@ -42,6 +42,8 @@ function getFallbackResponse(message: string): string {
   return FALLBACK_ANSWERS.default;
 }
 
+type RawMessage = { role: string; content: string };
+
 // ─── POST handler ─────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
@@ -63,9 +65,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Parse request body
-    const body: { messages?: { role: string; content: string }[]; message?: string } =
-      await req.json();
-
+    const body: { messages?: RawMessage[]; message?: string } = await req.json();
     const rawMessages = body.messages ?? [];
     const lastUserMsg =
       rawMessages.filter((m) => m.role === "user").at(-1)?.content ??
@@ -81,24 +81,21 @@ export async function POST(req: NextRequest) {
 
     if (geminiKey) {
       try {
-        // Convert to CoreMessage format for the AI SDK
-        const coreMessages: CoreMessage[] = rawMessages
-          .slice(-10) // keep last 10 messages for context
+        // Build conversation as a single prompt to avoid CoreMessage type issues
+        const history = rawMessages
+          .slice(-10)
           .filter((m) => m.role === "user" || m.role === "assistant")
-          .map((m) => ({
-            role: m.role as "user" | "assistant",
-            content: m.content,
-          }));
+          .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)
+          .join("\n");
 
-        // Ensure the last message is from the user
-        if (coreMessages.length === 0 || coreMessages.at(-1)?.role !== "user") {
-          coreMessages.push({ role: "user", content: lastUserMsg });
-        }
+        const fullPrompt = history
+          ? `${history}\nUser: ${lastUserMsg}`
+          : lastUserMsg;
 
         const { text } = await generateText({
           model: google("gemini-2.0-flash"),
           system: SYSTEM_PROMPT,
-          messages: coreMessages,
+          prompt: fullPrompt,
           maxTokens: 800,
         });
 
@@ -106,7 +103,6 @@ export async function POST(req: NextRequest) {
       } catch (geminiError) {
         const errMsg = geminiError instanceof Error ? geminiError.message : String(geminiError);
         console.error("Gemini API error:", errMsg);
-        // Fall through to keyword fallback
       }
     }
 

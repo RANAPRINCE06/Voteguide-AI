@@ -1,23 +1,22 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { google } from "@ai-sdk/google";
 import { generateText } from "ai";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
-    const { topic } = await req.json();
+    const { topic } = await req.json() as { topic?: string };
     if (!topic) return NextResponse.json({ error: "Topic required" }, { status: 400 });
 
     const geminiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
     if (!geminiKey) {
-      // Fallback quiz
       return NextResponse.json({ questions: getFallbackQuiz(topic) });
     }
 
-    const prompt = `Generate exactly 4 multiple-choice quiz questions about "${topic}" in the context of the election process and civic education.
+    const prompt = `Generate exactly 4 multiple-choice quiz questions about "${topic}" in the context of the Indian election process and civic education.
 
-Return ONLY a valid JSON array with this exact structure (no markdown, no explanation, just JSON):
+Return ONLY a valid JSON array with this exact structure (no markdown, no code block, just raw JSON):
 [
   {
     "question": "Question text here?",
@@ -39,14 +38,23 @@ Rules:
       maxTokens: 1200,
     });
 
-    // Extract JSON from response
+    // Extract JSON array from response
     const jsonMatch = text.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) throw new Error("No JSON found in response");
-    
-    const questions = JSON.parse(jsonMatch[0]);
+    if (!jsonMatch) {
+      return NextResponse.json({ questions: getFallbackQuiz(topic) });
+    }
+
+    const questions = JSON.parse(jsonMatch[0]) as {
+      question: string;
+      options: string[];
+      correct: number;
+      explanation: string;
+    }[];
+
     return NextResponse.json({ questions });
   } catch (error) {
-    console.error("Quiz API error:", error);
+    const errMsg = error instanceof Error ? error.message : String(error);
+    console.error("Quiz API error:", errMsg);
     return NextResponse.json({ questions: getFallbackQuiz("elections") });
   }
 }
@@ -54,28 +62,41 @@ Rules:
 function getFallbackQuiz(topic: string) {
   return [
     {
-      question: `What is the minimum voting age in most democracies, including India?`,
+      question: "What is the minimum voting age in India?",
       options: ["16 years", "18 years", "21 years", "25 years"],
       correct: 1,
-      explanation: "In India, the minimum voting age is 18 years, established by the 61st Constitutional Amendment in 1989.",
+      explanation:
+        "In India, the minimum voting age is 18 years, established by the 61st Constitutional Amendment in 1989.",
     },
     {
-      question: `Which body conducts general elections in India?`,
-      options: ["Supreme Court", "Parliament", "Election Commission of India", "President's Office"],
+      question: "Which body conducts general elections in India?",
+      options: [
+        "Supreme Court",
+        "Parliament",
+        "Election Commission of India",
+        "President's Office",
+      ],
       correct: 2,
-      explanation: "The Election Commission of India (ECI) is an autonomous constitutional authority responsible for administering elections.",
+      explanation:
+        "The Election Commission of India (ECI) is an autonomous constitutional authority responsible for administering elections.",
     },
     {
-      question: `What does EVM stand for in Indian elections?`,
-      options: ["Electronic Voting Machine", "Election Verification Method", "Electoral Vote Monitor", "Electronic Voter Module"],
+      question: "What does EVM stand for in Indian elections?",
+      options: [
+        "Electronic Voting Machine",
+        "Election Verification Method",
+        "Electoral Vote Monitor",
+        "Electronic Voter Module",
+      ],
       correct: 0,
-      explanation: "EVM stands for Electronic Voting Machine, used in Indian elections since the 1990s for secure, efficient voting.",
+      explanation:
+        "EVM stands for Electronic Voting Machine, used in Indian elections since the 1990s for secure and efficient voting.",
     },
     {
-      question: `How often are general elections held in India?`,
+      question: "How often are general elections held in India?",
       options: ["Every 3 years", "Every 4 years", "Every 5 years", "Every 6 years"],
       correct: 2,
-      explanation: `India holds general elections every 5 years to elect members of the Lok Sabha, the lower house of Parliament. The topic "${topic}" relates to this democratic cycle.`,
+      explanation: `India holds general elections every 5 years to elect members of the Lok Sabha. Topic: "${topic}".`,
     },
   ];
 }
